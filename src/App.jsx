@@ -131,7 +131,7 @@ const TEXTS = {
 // 2. GEMINI API INTEGRATION
 // ==========================================
 const callGemini = async (prompt) => {
-  const apiKey = "AIzaSyC_eTqOnCejMnnJ4LDZ8zcxiH7MiebFUJ0"; // 🔑 YOUR API KEY HERE
+  const apiKey = "AIzaSyDwibyt4ncbq2clxm9V6ACgsxqTJSSFZvI"; // 🔑 YOUR API KEY HERE
 
   if (!apiKey) return "API Key missing.";
 
@@ -772,13 +772,22 @@ const askBard = async () => {
     setAiLoading(false);
   };
 
-  const spyOnOpponent = async (opp) => {
+const spyOnOpponent = async (opp) => {
     setAiType('spy');
     setAiModalOpen(true);
     setAiLoading(true);
+    
+    // --- UPDATED SPY PROMPT FOR KIDS ---
     const prompt = language === 'he'
-        ? `אתה מרגל טקטי. היריב ${opp.name} יש ${opp.score} נקודות ו-${opp.hand.length} קלפים. תן הערכה טקטית קצרה בעברית.`
-        : `You are a tactical spy. Opponent ${opp.name} has ${opp.score} points and ${opp.hand.length} cards. Give a short tactical assessment in English.`;
+        ? `אתה שדון סקרן, חמוד וידידותי מאוד. הצצת בקלפים של החבר/ה "${opp.name}".
+           יש לו/ה ${opp.score} נקודות ו-${opp.hand.length} קלפים ביד.
+           במקום לתת "דו"ח ריגול", תן מחמאה מצחיקה או הערה חמודה לילדים על המצב שלהם.
+           למשל: "וואו! איזה אוסף יפה!" או "נראה שהם מתכננים מסיבת הפתעה!". היה קצר ומתוק.`
+        : `You are a cute, friendly, and curious little scout. You took a peek at "${opp.name}"'s cards.
+           They have ${opp.score} points and ${opp.hand.length} cards.
+           Instead of a "spy report", give a funny compliment or a sweet comment for kids.
+           For example: "Wow! What a great collection!" or "Looks like they are planning a surprise party!". Be short and sweet.`;
+
     const response = await callGemini(prompt);
     setAiContent(response);
     setAiLoading(false);
