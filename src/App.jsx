@@ -10,7 +10,9 @@ import {
   BookOpen, 
   Loader2,
   Music,    
-  Eye
+  Eye,
+  Key,
+  Save
 } from 'lucide-react';
 
 // ==========================================
@@ -66,6 +68,9 @@ const TEXTS = {
     kidMode: "מצב ילדים 🎈",
     normalMode: "מצב רגיל 👔",
     aiThinking: "מתייעץ עם הכוכבים...",
+    enterKey: "מפתח API (עבור ה-AI)",
+    saveKey: "שמור מפתח",
+    apiKeyMissing: "חסר מפתח API. נא להזין אותו בהגדרות.",
     cardLabels: {
       king: "מלך", knight: "אביר", potion: "שיקוי", dragon: "דרקון", wand: "שרביט", jester: "ליצן", number: "מספר"
     },
@@ -117,6 +122,9 @@ const TEXTS = {
     kidMode: "Kid Mode 🎈",
     normalMode: "Normal Mode 👔",
     aiThinking: "Consulting the stars...",
+    enterKey: "Gemini API Key (for AI)",
+    saveKey: "Save Key",
+    apiKeyMissing: "API Key missing. Please enter it in settings.",
     cardLabels: {
       king: "King", knight: "Knight", potion: "Potion", dragon: "Dragon", wand: "Wand", jester: "Jester", number: "Number"
     },
@@ -130,12 +138,8 @@ const TEXTS = {
 // ==========================================
 // 2. GEMINI API INTEGRATION
 // ==========================================
-const callGemini = async (prompt) => {
-
-  const apiKey = ""; // 🔑 YOUR API KEY HERE
-
-
-  if (!apiKey) return "API Key missing.";
+const callGemini = async (prompt, apiKey) => {
+  if (!apiKey) return "API Key missing. Please check settings.";
 
   try {
     const response = await fetch(
@@ -166,7 +170,7 @@ class MockGameEngine {
     this.reset();
   }
 
-  reset() {
+  reset(apiKey = null) {
     this.id = Math.random().toString(36).substr(2, 9);
     this.players = {};
     this.deck = this.createDeck();
@@ -178,6 +182,7 @@ class MockGameEngine {
     this.lastMessage = { key: 'created', params: {} };
     this.winnerId = null;
     this.pendingRoseWake = false;
+    this.apiKey = apiKey; // Store API Key in Mock Server
   }
 
   createQueens() {
@@ -383,7 +388,8 @@ class MockGameEngine {
       discardPile: this.discardPile.slice(-1), 
       queensSleeping: this.queensSleeping,
       players: Object.values(this.players).map(p => ({ ...p, queensAwake: this.queensAwake[p.id] || [] })),
-      deckSize: this.deck.length
+      deckSize: this.deck.length,
+      apiKey: this.apiKey // Return API Key to clients
     };
   }
 }
@@ -550,6 +556,8 @@ export default function App() {
   const [isKidMode, setIsKidMode] = useState(false);
   const [language, setLanguage] = useState('he');
   const [error, setError] = useState('');
+  const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
+  const [showKeyModal, setShowKeyModal] = useState(false);
 
   // AI State
   const [aiModalOpen, setAiModalOpen] = useState(false);
@@ -560,11 +568,27 @@ export default function App() {
   const t = TEXTS[language];
   const toggleLanguage = () => setLanguage(prev => prev === 'he' ? 'en' : 'he');
 
+  const saveApiKey = (key) => {
+    localStorage.setItem('gemini_api_key', key);
+    setApiKey(key);
+    setShowKeyModal(false);
+  };
+
+  useEffect(() => {
+    // Only prompt for key in settings if not found, 
+    // but the main input is now in the lobby for the creator.
+  }, []);
+
   // --- API CALLS (Hybrid Mock/Real) ---
 
   const fetchGameState = async () => {
     if (USE_MOCK_API) {
-      setGameState(mockServer.getState());
+      const state = mockServer.getState();
+      setGameState(state);
+      // Auto-retrieve API key if server has it and we don't
+      if (state.apiKey && !apiKey) {
+        saveApiKey(state.apiKey);
+      }
       return;
     }
     if (!roomId) return;
@@ -573,6 +597,10 @@ export default function App() {
       if (!res.ok) throw new Error("Network response was not ok");
       const data = await res.json();
       setGameState(data);
+      // Auto-retrieve API key if server has it and we don't
+      if (data.apiKey && !apiKey) {
+        saveApiKey(data.apiKey);
+      }
     } catch (err) {
       console.error('Error fetching state:', err);
     }
@@ -580,7 +608,7 @@ export default function App() {
 
   const createGame = async () => {
     if (USE_MOCK_API) {
-      mockServer.reset();
+      mockServer.reset(apiKey); // Pass API Key to Mock Server
       const p = mockServer.addPlayer(playerName || (language==='he' ? "שחקן" : "Player"));
       mockServer.addPlayer(language==='he' ? "מחשב" : "CPU"); 
       setRoomId(mockServer.id);
@@ -589,7 +617,11 @@ export default function App() {
       setView('game');
     } else {
       try {
-        const res = await fetch(`${API_URL}/rooms`, { method: 'POST' });
+        const res = await fetch(`${API_URL}/rooms`, { 
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ apiKey }) // Send API Key to Backend
+        });
         const data = await res.json();
         setRoomId(data.roomId);
         await joinGame(data.roomId); 
@@ -644,7 +676,7 @@ export default function App() {
   const playMove = async (targetId = null) => {
     if (selectedCardIds.length === 0 && !gameState.pendingRoseWake) return;
     const effectiveCardIds = (gameState.pendingRoseWake && selectedCardIds.length === 0) 
-        ? ['rose-bonus-action'] // Or however your backend handles "Rose Bonus with no cards selected"
+        ? ['rose-bonus-action'] 
         : selectedCardIds;
     const cardsToSend = gameState.pendingRoseWake ? [] : effectiveCardIds;
 
@@ -687,13 +719,12 @@ export default function App() {
 
   // --- GEMINI HANDLERS ---
   const askAdvisor = async () => {
+    if (!apiKey) { setShowKeyModal(true); return; }
     setAiType('advisor');
     setAiModalOpen(true);
     setAiLoading(true);
     const player = gameState.players.find(p => p.id === playerId);
     if (!player) return;
-    
-    // Format hand for AI to read easily
     const myHand = player.hand.map(c=>`${c.type} ${c.value||''}`).join(', ');
     const queensSleeping = gameState.queensSleeping.length;
     const opponentStatus = gameState.players.filter(p=>p.id!==playerId).map(p=>`${p.name} has ${p.queensAwake.length} queens`).join(', ');
@@ -739,46 +770,46 @@ export default function App() {
           Based on this priority, what is my BEST move? Be concise and speak like a wise wizard.
         `;
     }
-    const response = await callGemini(prompt);
+    const response = await callGemini(prompt, apiKey);
     setAiContent(response);
     setAiLoading(false);
   };
 
   const askLore = async (cardName) => {
+    if (!apiKey) { setShowKeyModal(true); return; }
     setAiType('lore');
     setAiModalOpen(true);
     setAiLoading(true);
     const prompt = language === 'he' 
         ? `כתוב סיפור רקע אגדי, קצר (1-2 משפטים) ושובב בעברית עבור "${cardName}" בממלכת המלכות הישנות.`
         : `Write a legendary, short (1-2 sentences) and playful backstory in English for "${cardName}" in the Kingdom of Sleeping Queens.`;
-    const response = await callGemini(prompt);
+    const response = await callGemini(prompt, apiKey);
     setAiContent(response);
     setAiLoading(false);
   };
 
-const askBard = async () => {
+  const askBard = async () => {
+    if (!apiKey) { setShowKeyModal(true); return; }
     setAiType('bard');
     setAiModalOpen(true);
     setAiLoading(true);
     const msg = translateMessage(gameState.lastMessage, language);
-    
     // --- UPDATED BARD PROMPT FOR KIDS ---
     const prompt = language === 'he'
         ? `כתוב שיר ילדים קצרצר (2-4 שורות), מצחיק, מתוק ועדין מאוד בעברית על מה שקרה במשחק: "${msg}".
            השתמש בחרוזים פשוטים ושפה קלילה שמתאימה לקטנטנים. בלי מילים מורכבות.`
         : `Write a very gentle, short, and funny nursery rhyme (2-4 lines) for young kids in English about: "${msg}".
            Make it sweet, simple, and rhyming like a children's book.`;
-           
-    const response = await callGemini(prompt);
+    const response = await callGemini(prompt, apiKey);
     setAiContent(response);
     setAiLoading(false);
   };
 
-const spyOnOpponent = async (opp) => {
+  const spyOnOpponent = async (opp) => {
+    if (!apiKey) { setShowKeyModal(true); return; }
     setAiType('spy');
     setAiModalOpen(true);
     setAiLoading(true);
-    
     // --- UPDATED SPY PROMPT FOR KIDS ---
     const prompt = language === 'he'
         ? `אתה שדון סקרן, חמוד וידידותי מאוד. הצצת בקלפים של החבר/ה "${opp.name}".
@@ -789,8 +820,7 @@ const spyOnOpponent = async (opp) => {
            They have ${opp.score} points and ${opp.hand.length} cards.
            Instead of a "spy report", give a funny compliment or a sweet comment for kids.
            For example: "Wow! What a great collection!" or "Looks like they are planning a surprise party!". Be short and sweet.`;
-
-    const response = await callGemini(prompt);
+    const response = await callGemini(prompt, apiKey);
     setAiContent(response);
     setAiLoading(false);
   };
@@ -831,56 +861,70 @@ const spyOnOpponent = async (opp) => {
     }
   };
 
+  // --- DERIVED STATE FOR RENDER ---
+  const myPlayer = gameState?.players?.find(p => p.id === playerId);
+  const isMyTurn = gameState?.turnPlayerId === playerId;
+  
+  const selectedType = selectedCardIds.length > 0 && myPlayer?.hand 
+    ? myPlayer.hand.find(c => c.id === selectedCardIds[0])?.type 
+    : null;
+
+  const targetSleeping = isMyTurn && (selectedType === 'king' || gameState?.pendingRoseWake);
+  const targetAwake = isMyTurn && (selectedType === 'knight' || selectedType === 'potion');
+
   // --- RENDER ---
-  if (view === 'lobby') {
-    return (
-      <div className={`app-container ${isKidMode ? 'theme-kid' : 'theme-default'} ${language === 'he' ? 'rtl' : ''}`}>
-        <style>{styles}</style>
-        <button className="toggle-kid-mode" onClick={() => setIsKidMode(!isKidMode)}>{isKidMode ? t.normalMode : t.kidMode}</button>
-        <button className="toggle-lang" onClick={toggleLanguage}>{t.toggleLang}</button>
+  return (
+    <div className={`app-container ${isKidMode ? 'theme-kid' : 'theme-default'} ${language === 'he' ? 'rtl' : ''}`}>
+      <style>{styles}</style>
+      <button className="toggle-kid-mode" onClick={() => setIsKidMode(!isKidMode)}>{isKidMode ? t.normalMode : t.kidMode}</button>
+      <button className="toggle-lang" onClick={toggleLanguage}>{t.toggleLang}</button>
+      <button className="toggle-lang" style={{top: 50}} onClick={() => setShowKeyModal(true)}><Key size={14}/></button>
+
+      {/* API Key Modal */}
+      {showKeyModal && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+             <button className="close-btn" onClick={() => setShowKeyModal(false)}>×</button>
+             <h2>{t.enterKey}</h2>
+             <input type="text" className="styled-input" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="AIza..." style={{marginBottom: 10}} />
+             <button className="action-btn btn-create" onClick={() => saveApiKey(apiKey)}><Save size={16}/> {t.saveKey}</button>
+          </div>
+        </div>
+      )}
+
+      {view === 'lobby' ? (
         <div className="lobby-card">
           <h1 className="lobby-title">{isKidMode ? t.kidTitle : t.appTitle}</h1>
           <p className="lobby-subtitle">{isKidMode ? t.kidSubtitle : t.lobbySubtitle}</p>
           <div className="input-group"><input className="styled-input" placeholder={isKidMode ? t.kidName : t.enterName} value={playerName} onChange={e => setPlayerName(e.target.value)} /></div>
+          
+          {/* API Key Input for Creator */}
+          <div className="input-group">
+             <input 
+               type="text" 
+               className="styled-input" 
+               value={apiKey} 
+               onChange={e => { setApiKey(e.target.value); localStorage.setItem('gemini_api_key', e.target.value); }} 
+               placeholder={t.enterKey} 
+               style={{borderColor: '#FFD700'}}
+             />
+          </div>
+
           <button className="action-btn btn-create" onClick={createGame}>{isKidMode ? t.kidCreate : t.createGame}</button>
           <div className="divider">{t.orJoin}</div>
           <div className="input-group"><input className="styled-input" placeholder={t.pasteRoom} value={roomId} onChange={e => setRoomId(e.target.value)} /></div>
           <button className="action-btn btn-join" onClick={() => joinGame()}>{isKidMode ? t.kidJoin : t.joinGame}</button>
           {error && <p style={{color:'red'}}>{error}</p>}
         </div>
-      </div>
-    );
-  }
-  
-  if (gameState && gameState.winnerId) {
-    const winnerName = gameState.players.find(p => p.id === gameState.winnerId)?.name;
-    return (
-      <div className={`app-container ${isKidMode ? 'theme-kid' : 'theme-default'} ${language === 'he' ? 'rtl' : ''}`}>
-        <style>{styles}</style>
+      ) : (gameState && gameState.winnerId) ? (
         <div className="lobby-card">
             <h1 style={{color: 'gold', fontSize: '3rem', margin: 0}}>🏆</h1>
             <h2 className="lobby-title">{t.gameOver}</h2>
-            <h3>{t.winner}: {winnerName}</h3>
+            <h3>{t.winner}: {gameState.players.find(p => p.id === gameState.winnerId)?.name}</h3>
             <button className="action-btn btn-create" onClick={() => window.location.reload()}>{t.playAgain}</button>
         </div>
-      </div>
-    );
-  }
-
-  if (!gameState) return <div style={{textAlign:'center', marginTop:50}}>{t.loading}</div>;
-
-  const myPlayer = gameState.players.find(p => p.id === playerId);
-  const isMyTurn = gameState.turnPlayerId === playerId;
-  const selectedType = selectedCardIds.length > 0 ? myPlayer?.hand.find(c => c.id === selectedCardIds[0])?.type : null;
-  const targetSleeping = isMyTurn && (selectedType === 'king' || gameState.pendingRoseWake);
-  const targetAwake = isMyTurn && (selectedType === 'knight' || selectedType === 'potion');
-
-  return (
-    <div className={`app-container ${isKidMode ? 'theme-kid' : 'theme-default'} ${language === 'he' ? 'rtl' : ''}`}>
-      <style>{styles}</style>
-      <button className="toggle-kid-mode" onClick={() => setIsKidMode(!isKidMode)}>{isKidMode ? t.normalMode : t.kidMode}</button>
-      <button className="toggle-lang" onClick={toggleLanguage}>{t.toggleLang}</button>
-      <div className="game-board">
+      ) : gameState ? (
+        <div className="game-board">
           <div className="top-bar">
              <div>{t.room}: <strong>{gameState.id}</strong></div>
              <div>{gameState.started ? (isMyTurn ? t.yourTurn : t.waiting) : t.notStarted}</div>
@@ -968,7 +1012,10 @@ const spyOnOpponent = async (opp) => {
                )}
              </div>
           </div>
-      </div>
+        </div>
+      ) : <div style={{textAlign:'center', marginTop:50}}>{t.loading}</div>}
+
+      {/* AI Modal */}
       {aiModalOpen && (
           <div className="modal-overlay" onClick={() => setAiModalOpen(false)}>
             <div className="modal-content" onClick={e => e.stopPropagation()}>
