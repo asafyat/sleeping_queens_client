@@ -131,7 +131,7 @@ const TEXTS = {
 // 2. GEMINI API INTEGRATION
 // ==========================================
 const callGemini = async (prompt) => {
-  const apiKey = "AIzaSyC_eTqOnCejMnnJ4LDZ8zcxiH7MiebFUJ0"; // 🔑 YOUR API KEY HERE
+  const apiKey = ""; // 🔑 YOUR API KEY HERE
 
   if (!apiKey) return "API Key missing.";
 
